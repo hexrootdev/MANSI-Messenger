@@ -3,7 +3,6 @@ from database import AsyncSession, select, with_db_session, User, Chat, ChatMemb
 # *TEMP - временная функция (для получения сведений через API)
 
 # Универсальная функция получения объекта по его ID
-@with_db_session
 async def db_get(session: AsyncSession, class_, uid: int):
     return await session.get(class_, uid)
 
@@ -13,6 +12,12 @@ async def db_get(session: AsyncSession, class_, uid: int):
 @with_db_session
 async def get_user_by_email(session: AsyncSession, email: str):
     stmt = select(User).where(User.email == email)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+@with_db_session
+async def get_user_by_id(session: AsyncSession, uid: int):
+    stmt = select(User).where(User.id == uid)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -34,7 +39,7 @@ async def select_all_users(session: AsyncSession):
 
 # Создание нового пользователя (регистрация)
 @with_db_session
-async def create_user(session: AsyncSession, username: str, email: str, password_hash, remember_user: bool=False):
+async def create_user(session: AsyncSession, username: str, email: str, password_hash):
     new_user = User(username=username, email=email, password_hash=password_hash)
     session.add(new_user)
     await session.flush()
@@ -50,8 +55,7 @@ async def select_all_chats(session: AsyncSession):
     chats = result.scalars().all()
     return {"chats": [{"id": c.id, "name": c.name, "type": c.type} for c in chats]}
 
-# Создание чата 
-@with_db_session
+# Создание чата         скорее всего нужно сделать не прямой запрос к БД, а через сервер (POST запрос)   
 async def create_chat(session: AsyncSession, name: str | None, type_: ChatType):
     new_chat = Chat(name=name, type=type_)
     session.add(new_chat)
@@ -69,7 +73,6 @@ async def select_all_chat_members(session: AsyncSession):
     return {"members": [{"chat_id": m.chat_id, "user_id": m.user_id} for m in members]}
 
 # Получить всех участников чата с chat_id
-@with_db_session
 async def select_members_in_chat(session: AsyncSession, chat_id):
     stmt = select(ChatMember).where(ChatMember.chat_id == chat_id)
     result = await session.execute(stmt)
@@ -77,10 +80,11 @@ async def select_members_in_chat(session: AsyncSession, chat_id):
     return members
 
 # Добавление участников чата в чат (работает вместе с create_chat)
-@with_db_session
 async def add_members_to_chat_direct(session: AsyncSession, chat_id: int, uid1: int, uid2: int):
     member1 = ChatMember(chat_id=chat_id, user_id=uid1)
     member2 = ChatMember(chat_id=chat_id, user_id=uid2)
+
+
     session.add_all([member1, member2])
     await session.flush()
 
@@ -101,12 +105,13 @@ async def create_new_message(session: AsyncSession, chat_id: int, sender_id: int
     await session.flush()
     return message
 
-# Получить все сообщения чата с chat_id
-@with_db_session
-async def select_chat_messages(session: AsyncSession, chat_id: int):
-    stmt = select(Message).where(Message.chat_id == chat_id)
+# Получить все сообщения чата с chat_id с отправителем
+async def select_chat_messages_with_sender(session: AsyncSession, chat_id: int):
+    stmt = select(Message, User.username).join(User, Message.sender_id == User.id).where(Message.chat_id == chat_id)
     result = await session.execute(stmt)
-    messages = result.scalars().all()
-    return {"messages": [{"chat_id": msg.chat_id, "sender_id": msg.sender_id, "content": msg.content} for msg in messages]}
+    messages = result.all()
+    return messages
 
 # Attachments -----------------------
+
+...

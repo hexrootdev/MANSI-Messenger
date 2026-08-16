@@ -1,12 +1,12 @@
 import flet as ft
 import asyncio
-import sys
+import json
 
 from functions.hash_pass import hash_password, check_password
-from functions.requests import search_users, get_messages_chat, get_chat_list_request
+from functions.requests import get_user_request, search_users, get_messages_chat, get_chat_list_request, create_direct_chat_request
 from functions.other import make_handler
 from database import create_db, User, Chat, ChatMember, Message, Attachment, AttachmentType, ChatType
-from crud import create_user, db_get, get_user_by_email, create_chat, add_members_to_chat_direct, create_new_message
+from crud import create_user, get_user_by_email, create_new_message
 import websockets
 
 
@@ -37,7 +37,6 @@ async def main(page: ft.Page):
         receiver_id: int = None
         cur_ws = None
         
-        message_task: asyncio.Task = None  
         chats_task: asyncio.Task = None
         
         async def connect_to_websocket(user_id: int):
@@ -46,8 +45,8 @@ async def main(page: ft.Page):
             async with websockets.connect(url) as ws:
                 cur_ws = ws  
                 while True:
-                    payload = await ws.recv()
-                    draw_message(payload)
+                    payload = json.loads(await ws.recv())
+                    await draw_message(payload)
         
         asyncio.create_task(connect_to_websocket(user_id=my_id))
         
@@ -58,8 +57,7 @@ async def main(page: ft.Page):
                                             margin=ft.Margin.only(top=50, bottom=50), padding=10, border_radius=14, width=200, bgcolor=THEME_COLOR1)
                 user_chat.controls.append(ft.Row(controls=[msg_container], alignment=ft.CrossAxisAlignment.END))
             else:
-                sender = await db_get(class_=User, uid=message["sender_id"])
-                msg_container = ft.Container(content=ft.Text(value=f"{sender.username}: {message["content"]}", color=THEME_COLOR2),
+                msg_container = ft.Container(content=ft.Text(value=f"{message["sender_username"]}: {message["content"]}", color=THEME_COLOR2),
                                             margin=ft.Margin.only(top=50, bottom=50), padding=10, border_radius=14, width=200, bgcolor=THEME_COLOR1)
                 user_chat.controls.append(ft.Row(controls=[msg_container], alignment=ft.CrossAxisAlignment.START))
             page.update()
@@ -121,16 +119,17 @@ async def main(page: ft.Page):
 
         chats_task = asyncio.create_task(handle_chats(e=None))
         
-        # Создание чата -> запуск Task -> добавление сообщения в БД / добавление сообщения в БД
+        # Создание чата -> запуск Task -> добавление сообщения в БД / добавление сообщения в БД (old)
+        # Создание чата DIRECT -> добавление участников -> отправка json на сервер
         async def on_send(e):
             nonlocal cur_chat_id, receiver_id, cur_ws
             if cur_chat_id is None:
-                chat = await create_chat(name=None, type_=ChatType.DIRECT) # прямой вызов CRUD
-                await add_members_to_chat_direct(chat_id=chat.id, uid1=my_id, uid2=receiver_id) # прямой вызов CRUD
+                # chat = await create_chat(name=None, type_=ChatType.DIRECT) # прямой вызов CRUD
+                # await add_members_to_chat_direct(chat_id=chat.id, uid1=my_id, uid2=receiver_id) # прямой вызов CRUD
+                await create_direct_chat_request(name=None, user_ids=[my_id, receiver_id]) #
                 cur_chat_id = chat.id
-            from json import dumps
             await cur_ws.send(
-                dumps({
+                json.dumps({
                     "type": "message",
                     "chat_id": cur_chat_id,
                     "content": user_input.value
@@ -142,12 +141,12 @@ async def main(page: ft.Page):
         # Отображаем новый чат
         async def start_chat(e, user_id: int):
             await toggle_search(e) # переключаем видимость search_container и search_input обратно на chats_view_container
-            user = await db_get(class_=User, uid=user_id) # прямой вызов CRUD
+            user = await get_user_request(user_id=user_id)
             nonlocal cur_chat_id, receiver_id
             receiver_id = user_id
             cur_chat_id = None
             user_chat.controls.clear()
-            user_name.value = user.username
+            user_name.value = user["username"]
             page.update()
         
         # Отображаем уже существующий чат
@@ -156,12 +155,14 @@ async def main(page: ft.Page):
             receiver_id = chat["receiver_id"]
             cur_chat_id = chat["chat_id"]
             user_name.value = chat["title"]
-            
-            user_chat.controls.clear()
-            if message_task:
-                message_task.cancel()
 
-            await asyncio.create_task(handle_message(e, chat_id=chat["chat_id"]))
+            user_chat.controls.clear()
+
+            message_history = await get_messages_chat(cur_chat_id)
+            for message in message_history:
+                await draw_message(payload={
+                    "message": message,
+                })
 
             page.update()
 

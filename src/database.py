@@ -1,12 +1,15 @@
 from datetime import datetime
 from functools import wraps
 import enum
+
 import os
+from dotenv import load_dotenv
 
 from sqlalchemy import select, String, Integer, Boolean, ForeignKey, Enum, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+load_dotenv()
 
 DATABASE_URL = os.getenv("DB_URL")
 
