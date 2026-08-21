@@ -72,17 +72,30 @@ async def create_message(data):
     return await create_new_message(chat_id=data.chat_id, sender_id=data.sender_id, content=data.content)
 
 @app.post("/chats/direct")
-async def create_direct_chat(name: str | None, user_ids: list[int]):
-    return await create_chat_service(name=name, type_=ChatType.DIRECT, user_ids=user_ids)
+async def create_direct_chat(user_ids: list[int] = Query(...)):
+    print("/chats/direct")
+    result = await create_chat_service(name=None, type_=ChatType.DIRECT, user_ids=user_ids)
+    chat = result["chat"]
+    members = result["members"]
+    receiver = result["receiver"]
+    payload = {
+        "type": "chat_created",
+        "chat": {
+            "chat_id": chat.id,
+            "receiver_id": receiver["id"],
+            "title": receiver["title"],
+        }
+    }
+    for member in members:
+        await manager.send_to(receiver_id=member, payload=payload)
+    return result
 
 # Websockets --------------------------------------
 
-# Отлов новых сообщений
 manager = ConnectionManager()
 @app.websocket("/ws/user")
 async def websocket_endpoint(websocket: WebSocket, user_id: int):
     await manager.connect(user_id, websocket)
-    print("User connected")
     try:
         while True:
             data = await websocket.receive_json()
@@ -95,7 +108,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
                 receivers = result["receivers"]
                 message = result["message"]
                 sender_username = result["sender_username"]
-
                 
                 payload = {
                             "type": "message",

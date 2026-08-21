@@ -37,8 +37,6 @@ async def main(page: ft.Page):
         receiver_id: int = None
         cur_ws = None
         
-        chats_task: asyncio.Task = None
-        
         async def connect_to_websocket(user_id: int):
             nonlocal cur_ws
             url = f"ws://127.0.0.1:8000/ws/user?user_id={user_id}"
@@ -46,7 +44,10 @@ async def main(page: ft.Page):
                 cur_ws = ws  
                 while True:
                     payload = json.loads(await ws.recv())
-                    await draw_message(payload)
+                    if payload["type"] == "message":
+                        await draw_message(payload)
+                    elif payload["type"] == "chat_created":
+                        await draw_chat(payload)
         
         asyncio.create_task(connect_to_websocket(user_id=my_id))
         
@@ -57,10 +58,52 @@ async def main(page: ft.Page):
                                             margin=ft.Margin.only(top=50, bottom=50), padding=10, border_radius=14, width=200, bgcolor=THEME_COLOR1)
                 user_chat.controls.append(ft.Row(controls=[msg_container], alignment=ft.CrossAxisAlignment.END))
             else:
-                msg_container = ft.Container(content=ft.Text(value=f"{message["sender_username"]}: {message["content"]}", color=THEME_COLOR2),
-                                            margin=ft.Margin.only(top=50, bottom=50), padding=10, border_radius=14, width=200, bgcolor=THEME_COLOR1)
-                user_chat.controls.append(ft.Row(controls=[msg_container], alignment=ft.CrossAxisAlignment.START))
+                if cur_chat_id == message["chat_id"]:
+                    msg_container = ft.Container(content=ft.Text(value=f"{message["sender_username"]}: {message["content"]}", color=THEME_COLOR2),
+                                                margin=ft.Margin.only(top=50, bottom=50), padding=10, border_radius=14, width=200, bgcolor=THEME_COLOR1)
+                    user_chat.controls.append(ft.Row(controls=[msg_container], alignment=ft.CrossAxisAlignment.START))
             page.update()
+
+        async def draw_chat(payload: dict):
+            chat = payload["chat"]
+            receiver_btn = ft.Button(content=ft.Row(expand=True,
+                        controls=[
+                                ft.Text(value=chat["title"], size=20, color=THEME_COLOR2)]),
+                                bgcolor=THEME_COLOR1, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=0)), on_click=make_handler(open_chat, chat=chat))
+            receiver_container = ft.Column(controls=[ft.Container(content=receiver_btn, height=70)], expand=True)
+            chats_view.controls.append(receiver_container)
+            page.update()
+
+
+        async def update_chats():
+            chats = await get_chat_list_request(user_id=my_id)
+            for chat in chats:
+                await draw_chat(payload={
+                    "chat": chat
+                })
+            page.update()
+
+        asyncio.create_task(update_chats())
+
+
+        # Каждые 3 секунды обновляем список чатов у пользователя
+        #async def handle_chats(e):
+        #    try:
+        #        while True:
+        #            chats_view.controls.clear()
+        #            chats = await get_chat_list_request(user_id=my_id) # OK
+        #            for chat in chats:
+        #                receiver_btn = ft.Button(content=ft.Row(expand=True,
+        #                    controls=[
+        #                        ft.Text(value=chat["title"], size=20, color=THEME_COLOR2),
+        #                    ]), bgcolor=THEME_COLOR1, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=0)), on_click=make_handler(open_chat, chat=chat)
+        #                )
+        #                receiver_container = ft.Column(controls=[ft.Container(content=receiver_btn, height=70)], expand=True)
+        #                chats_view.controls.append(receiver_container)
+        #            page.update()
+        #            await asyncio.sleep(3)
+        #    except asyncio.CancelledError:
+        #        raise
         
         # функция переключения видимости search_container и search_input
         async def toggle_search(e):
@@ -98,26 +141,6 @@ async def main(page: ft.Page):
         #    except asyncio.CancelledError:
         #        raise
         
-        # Каждые 3 секунды обновляем список чатов у пользователя
-        async def handle_chats(e):
-            try:
-                while True:
-                    chats_view.controls.clear()
-                    chats = await get_chat_list_request(user_id=my_id) # OK
-                    for chat in chats:
-                        receiver_btn = ft.Button(content=ft.Row(expand=True,
-                            controls=[
-                                ft.Text(value=chat["title"], size=20, color=THEME_COLOR2),
-                            ]), bgcolor=THEME_COLOR1, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=0)), on_click=make_handler(open_chat, chat=chat)
-                        )
-                        receiver_container = ft.Column(controls=[ft.Container(content=receiver_btn, height=70)], expand=True)
-                        chats_view.controls.append(receiver_container)
-                    page.update()
-                    await asyncio.sleep(3)
-            except asyncio.CancelledError:
-                raise
-
-        chats_task = asyncio.create_task(handle_chats(e=None))
         
         # Создание чата -> запуск Task -> добавление сообщения в БД / добавление сообщения в БД (old)
         # Создание чата DIRECT -> добавление участников -> отправка json на сервер
@@ -126,19 +149,22 @@ async def main(page: ft.Page):
             if cur_chat_id is None:
                 # chat = await create_chat(name=None, type_=ChatType.DIRECT) # прямой вызов CRUD
                 # await add_members_to_chat_direct(chat_id=chat.id, uid1=my_id, uid2=receiver_id) # прямой вызов CRUD
-                await create_direct_chat_request(name=None, user_ids=[my_id, receiver_id]) #
-                cur_chat_id = chat.id
+                data = await create_direct_chat_request(user_ids=[my_id, receiver_id]) # создаем DIRECT чат
+                chat = data["chat"]
+                user = await get_user_request(user_id=receiver_id)
+                await draw_chat(payload={"chat": {"chat_id": chat["id"], "receiver_id": receiver_id, "title": user["username"]}})
+                cur_chat_id = chat["id"]
             await cur_ws.send(
                 json.dumps({
                     "type": "message",
                     "chat_id": cur_chat_id,
-                    "content": user_input.value
+                    "content": user_input.value,
                 })
             )
             user_input.value = ""
             page.update()
 
-        # Отображаем новый чат
+        # Отображаем новый чат (НЕ СОЗДАЕМ!!!)
         async def start_chat(e, user_id: int):
             await toggle_search(e) # переключаем видимость search_container и search_input обратно на chats_view_container
             user = await get_user_request(user_id=user_id)
@@ -147,6 +173,7 @@ async def main(page: ft.Page):
             cur_chat_id = None
             user_chat.controls.clear()
             user_name.value = user["username"]
+            user_chat_stack.visible = True
             page.update()
         
         # Отображаем уже существующий чат
@@ -156,6 +183,7 @@ async def main(page: ft.Page):
             cur_chat_id = chat["chat_id"]
             user_name.value = chat["title"]
 
+            user_chat_stack.visible = True
             user_chat.controls.clear()
 
             message_history = await get_messages_chat(cur_chat_id)
@@ -317,6 +345,16 @@ async def main(page: ft.Page):
             ),
         )
 
+        user_chat_stack = ft.Stack(
+            expand=True,
+            visible=False,
+            controls=[
+                user_chat_container,
+                cur_user_row,
+                user_input_container,
+            ]
+        )
+
     
         page.add(
             ft.Stack(
@@ -333,14 +371,7 @@ async def main(page: ft.Page):
                                     search_container
                                 ]
                             ),
-                            ft.Stack(
-                                expand=True,
-                                controls=[
-                                    user_chat_container,
-                                    cur_user_row,
-                                    user_input_container,
-                                ]
-                            ),
+                            user_chat_stack
                         ]
                     ),
                 ]

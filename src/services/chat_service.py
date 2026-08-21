@@ -45,7 +45,10 @@ async def create_chat_service(session: AsyncSession, name: str | None, type_: Ch
         if len(user_ids) != 2:
             raise ValueError("DIRECT chat must have exactly 2 users")
         await add_members_to_chat_direct(session=session, chat_id=chat.id, uid1=user_ids[0], uid2=user_ids[1])
-    return chat
+    elif type_ == ChatType.GROUP:
+        ...
+    receiver = await db_get(session=session, class_=User, uid=user_ids[0])
+    return {"chat": chat, "members": [user_id for user_id in user_ids[1:]], "receiver": {"id": receiver.id, "title": receiver.username}}
     
 # Получить отправителей сообщений и сообщения
 @with_db_session

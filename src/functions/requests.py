@@ -36,14 +36,14 @@ async def get_messages_chat(chat_id: int):
                 return data.get("messages", [])
             return []
 
-async def create_direct_chat_request(name: str | None, user_ids: list[int]):
+async def create_direct_chat_request(user_ids: list[int]):
     async with aiohttp.ClientSession() as session:
-        url = f"http://127.0.0.1:8800/chats/direct"
-        async with session.post(url, params={
-            "name": name,
-            "user_ids": user_ids,
-        }) as resp:
+        url = f"http://127.0.0.1:8000/chats/direct"
+        params = [ ("user_ids", user_id)
+                   for user_id in user_ids ]
+        async with session.post(url, params=params) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 return data
-            return []
+            raise Exception(f"Server returned {resp.status}: {await resp.text()}")
+                
